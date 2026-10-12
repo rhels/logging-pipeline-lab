@@ -22,22 +22,11 @@ jobs:
       - name: YAML syntax check
         run: |
           set -e
-          python3 -m ensurepip --default-pip >/dev/null 2>&1 || true
-          python3 -m pip install --quiet pyyaml
-          python3 - <<'PY'
-          import pathlib, yaml
-          bad = []
-          for p in sorted(pathlib.Path('.').rglob('*.yaml')) + \
-                   sorted(pathlib.Path('.').rglob('*.yml')):
-              if '.github/workflows' in p.parts:
-                  continue
-              try:
-                  yaml.safe_load(p.read_text().replace('${RUN_ID}', 'x')
-                                 .replace('${RUN_BASE}', 'x')
-                                 .replace('${PODS}', '1'))
-              except Exception as e:
-                  bad.append(f"{p}: {e}")
-          if bad:
-              print("\n".join(bad)); raise SystemExit(1)
-          print("yaml OK")
-          PY
+          # The runner image has python3 but no pip, so fetch a static
+          # yq binary for YAML parsing instead of pip-installing pyyaml.
+          curl -sL https://github.com/mikefarah/yq/releases/download/v4.47.1/yq_linux_amd64 -o /tmp/yq
+          chmod +x /tmp/yq
+          find . -name '*.yaml' -o -name '*.yml' | grep -v '.github/workflows' | while read -r f; do
+            /tmp/yq eval '.' "$f" > /dev/null || { echo "INVALID YAML: $f"; exit 1; }
+          done
+          echo "yaml OK"
