@@ -1,0 +1,42 @@
+name: lint
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  lint:
+    # Runs on our own ARC runners on the Mac mini (Docker Desktop k8s),
+    # never on GitHub-hosted runners.
+    runs-on: [self-hosted, mini-k8s]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Python syntax check
+        run: |
+          set -e
+          find . -name '*.py' -print0 | xargs -0 python3 -m py_compile
+          echo "python OK"
+
+      - name: YAML syntax check
+        run: |
+          set -e
+          python3 -m pip install --quiet pyyaml
+          python3 - <<'PY'
+          import pathlib, yaml
+          bad = []
+          for p in sorted(pathlib.Path('.').rglob('*.yaml')) + \
+                   sorted(pathlib.Path('.').rglob('*.yml')):
+              if '.github/workflows' in p.parts:
+                  continue
+              try:
+                  yaml.safe_load(p.read_text().replace('${RUN_ID}', 'x')
+                                 .replace('${RUN_BASE}', 'x')
+                                 .replace('${PODS}', '1'))
+              except Exception as e:
+                  bad.append(f"{p}: {e}")
+          if bad:
+              print("\n".join(bad)); raise SystemExit(1)
+          print("yaml OK")
+          PY
