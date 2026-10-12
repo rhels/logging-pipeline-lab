@@ -22,6 +22,7 @@ jobs:
       - name: YAML syntax check
         run: |
           set -e
+          python3 -m ensurepip --default-pip >/dev/null 2>&1 || true
           python3 -m pip install --quiet pyyaml
           python3 - <<'PY'
           import pathlib, yaml
