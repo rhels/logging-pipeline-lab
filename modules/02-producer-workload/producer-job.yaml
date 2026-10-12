@@ -1,0 +1,50 @@
+# Producer as a finite Job:
+# fires TOTAL_LINES lines at LINES_PER_SEC, then completes on its own.
+#
+# Workload knobs (LINES_PER_SEC / LINE_BYTES / TOTAL_LINES) come from the
+# producer-config ConfigMap via envFrom. CPU/memory live here in the pod
+# spec: requests only, NO limits — the producer may burst to whatever
+# CPU/memory the node has free. Only RUN_ID is substituted per run.
+# Normally launched via run-producer.py, not applied by hand.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: producer-${RUN_ID}
+  namespace: log-sim
+  labels:
+    app: log-producer
+    run-id: "${RUN_ID}"
+spec:
+  backoffLimit: 0
+  ttlSecondsAfterFinished: 86400
+  template:
+    metadata:
+      labels:
+        app: log-producer
+        run-id: "${RUN_ID}"
+    spec:
+      restartPolicy: Never
+      tolerations:
+        - key: node.kubernetes.io/disk-pressure
+          operator: Exists
+          effect: NoSchedule
+      containers:
+        - name: producer
+          # Set this to your registry path (e.g. quay.io/you/log-producer:0.1.0)
+          # if you pushed the image from modules/01-producer-image; keep the
+          # short name only for sideloaded node images (IfNotPresent uses the
+          # node's local copy when it is already there; it never forces a pull).
+          image: log-producer:0.1.0
+          imagePullPolicy: IfNotPresent
+          envFrom:
+            - configMapRef:
+                name: producer-config
+          env:
+            - name: RUN_ID
+              value: "${RUN_ID}"
+          resources:
+            requests:
+              cpu: 250m
+              memory: 128Mi
+              ephemeral-storage: 64Mi
+            # No limits on purpose: burst to the node's free capacity.

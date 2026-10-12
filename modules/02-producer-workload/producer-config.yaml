@@ -1,0 +1,22 @@
+# Producer configuration — only the knobs that belong in a
+# ConfigMap: how much log the producer generates. The container reads these
+# via envFrom (see producer-job.yaml).
+#
+# CPU and memory are NOT configuration of the workload generator; they live
+# in the Job's pod spec, where Kubernetes resource management belongs.
+# The producer Jobs deliberately set requests only and NO limits, so a
+# producer pod can burst to all CPU/memory the node has free.
+#
+# RUN_ID is not here either: it is a per-run identity (used for exact
+# delivery counting in Loki), passed by run-producer.py at launch.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: producer-config
+  namespace: log-sim
+  labels:
+    app: log-producer
+data:
+  LINES_PER_SEC: "100"     # target emission rate, lines per second
+  LINE_BYTES: "1024"       # exact bytes per line, incl. newline
+  TOTAL_LINES: "1200"      # lines per pod, then the Job completes (0 = forever)

@@ -1,0 +1,132 @@
+# Logstash receiver: HTTP input on 8080, two outputs —
+#   1. Loki (queryable store), via the logstash-output-loki plugin
+#   2. a plain-text file archive, one file per container:
+#      <cluster>/namespace/pod/container/log.log on the logstash-files PVC
+# Delete either output block in the ConfigMap if you only want one sink.
+#
+# Things to adapt for your cluster:
+#   - the Loki gateway URL in logstash.conf (below) — point it at your
+#     Loki gateway Service, or remove the loki output entirely.
+#   - the first path segment of the file output ("mycluster") — set it to
+#     your cluster's name.
+#   - the Service type: ClusterIP as shipped (right when the collector
+#     runs in the same cluster). If your collectors are in ANOTHER
+#     cluster, expose it with a Route, NodePort, or LoadBalancer instead.
+#   - the PVC size (1 Gi was enough for a lab; size for your retention).
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: logstash-config
+  namespace: observability
+  labels:
+    app: logstash
+data:
+  logstash.conf: |
+    input {
+      http {
+        port => 8080
+        codec => json
+      }
+    }
+    output {
+      loki {
+        url => "http://loki-gateway.observability.svc.cluster.local/loki/api/v1/push"
+        # CRITICAL: with include_fields empty, this plugin (v1.2.0) turns EVERY
+        # top-level event field into a Loki label -- including Vector's
+        # per-event `timestamp`, which explodes Loki streams and trips its
+        # active-stream limit (silent 429 drops). Keep labels tiny + constant.
+        include_fields => ["log_type", "log_source", "hostname", "level"]
+      }
+      # Plain-text archive: one file per container,
+      # cluster/namespace/pod/container/log.log
+      file {
+        path => "/var/log/out/mycluster/%{[kubernetes][namespace_name]}/%{[kubernetes][pod_name]}/%{[kubernetes][container_name]}/log.log"
+        codec => line { format => "%{message}" }
+      }
+    }
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: logstash-files
+  namespace: observability
+  labels:
+    app: logstash
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: logstash
+  namespace: observability
+  labels:
+    app: logstash
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: logstash
+  template:
+    metadata:
+      labels:
+        app: logstash
+    spec:
+      containers:
+        - name: logstash
+          image: docker.elastic.co/logstash/logstash:8.17.3
+          command: ["/bin/sh", "-c"]
+          args:
+            - >
+              LS_JAVA_OPTS="-Xmx2048m" bin/logstash-plugin install logstash-output-loki;
+              exec bin/logstash
+          env:
+            - name: LS_JAVA_OPTS
+              value: "-Xms512m -Xmx1g"
+          ports:
+            - containerPort: 8080
+              name: http-input
+          readinessProbe:
+            tcpSocket:
+              port: 8080
+            initialDelaySeconds: 20
+            periodSeconds: 10
+            failureThreshold: 30
+          resources:
+            requests:
+              cpu: 250m
+              memory: 1Gi
+            limits:
+              memory: 3Gi
+          volumeMounts:
+            - name: config
+              mountPath: /usr/share/logstash/pipeline
+            - name: log-files
+              mountPath: /var/log/out
+      volumes:
+        - name: config
+          configMap:
+            name: logstash-config
+        - name: log-files
+          persistentVolumeClaim:
+            claimName: logstash-files
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: logstash
+  namespace: observability
+  labels:
+    app: logstash
+spec:
+  type: ClusterIP
+  selector:
+    app: logstash
+  ports:
+    - name: http-input
+      port: 8080
+      targetPort: 8080

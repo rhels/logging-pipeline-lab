@@ -1,0 +1,56 @@
+# Parallel producer: an Indexed Job; each pod emits its own run partition
+# (RUN_ID = <RUN_BASE>-<index>) so delivery counting stays exact per pod.
+#
+# Workload knobs come from the producer-config ConfigMap via envFrom, same
+# as producer-job.yaml; TOTAL_LINES in the ConfigMap is PER POD. CPU/memory
+# live in the pod spec below: requests only, NO limits (burst to free node
+# capacity).
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: producer-${RUN_BASE}
+  namespace: log-sim
+  labels:
+    app: log-producer
+    run-id: "${RUN_BASE}"
+spec:
+  completionMode: Indexed
+  parallelism: ${PODS}
+  completions: ${PODS}
+  backoffLimit: 0
+  ttlSecondsAfterFinished: 86400
+  template:
+    metadata:
+      labels:
+        app: log-producer
+        run-id: "${RUN_BASE}"
+    spec:
+      restartPolicy: Never
+      tolerations:
+        - key: node.kubernetes.io/disk-pressure
+          operator: Exists
+          effect: NoSchedule
+      containers:
+        - name: producer
+          # Set this to your registry path (e.g. quay.io/you/log-producer:0.1.0)
+          # if you pushed the image from modules/01-producer-image; keep the
+          # short name only for sideloaded node images (IfNotPresent uses the
+          # node's local copy when it is already there; it never forces a pull).
+          image: log-producer:0.1.0
+          imagePullPolicy: IfNotPresent
+          envFrom:
+            - configMapRef:
+                name: producer-config
+          env:
+            - name: POD_INDEX
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.annotations['batch.kubernetes.io/job-completion-index']
+            - name: RUN_ID
+              value: "${RUN_BASE}-$(POD_INDEX)"
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+              ephemeral-storage: 64Mi
+            # No limits on purpose: burst to the node's free capacity.

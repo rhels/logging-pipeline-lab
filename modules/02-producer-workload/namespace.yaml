@@ -1,0 +1,9 @@
+# Namespace the producer runs in. The ClusterLogForwarder in
+# modules/03-collector-openshift-logging forwards application logs from
+# this namespace only.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: log-sim
+  labels:
+    app: log-producer
